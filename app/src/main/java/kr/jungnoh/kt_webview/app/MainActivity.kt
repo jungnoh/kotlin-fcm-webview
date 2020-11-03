@@ -13,20 +13,19 @@ import android.view.View
 import android.widget.Toast
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
-import com.google.android.gms.tasks.OnCompleteListener
-import com.google.firebase.iid.FirebaseInstanceId
 import android.webkit.*
 
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var sessionSyncManager: SessionSyncManager
-
-    val fcm = MyFCMService()
     var mFilePathCallback: ValueCallback<Array<Uri>>? = null
     // ResultCode of file chooser
     val mFileChooserResultCode = 801
     // Timestamp of when the back key was last pressed.
     private var backKeyPressedTime: Long = 0
+
+    fun updateSessionToken(session: String) {
+        SessionLiveData.get(this).postValue(session)
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     fun setupWebView() {
@@ -45,9 +44,9 @@ class MainActivity : AppCompatActivity() {
         wv.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                val cookies = extractCookie(CookieManager.getInstance().getCookie(Config.host))
-                if (cookies != null) {
-                    sessionSyncManager.setSession(cookies)
+                val cookie = extractCookie(CookieManager.getInstance().getCookie(Config.host))
+                cookie?.let {
+                    updateSessionToken(cookie)
                 }
                 CookieManager.getInstance().flush()
             }
@@ -119,7 +118,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        sessionSyncManager = SessionSyncManager(null, null, this@MainActivity)
         // WebView debug
         WebView.setWebContentsDebuggingEnabled(true) // KitKat~
         if(GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this) != ConnectionResult.SUCCESS) {
@@ -128,16 +126,6 @@ class MainActivity : AppCompatActivity() {
         actionBar?.hide()
         setContentView(R.layout.activity_main)
         setupWebView()
-        fcm.onChange = {key -> sessionSyncManager.setFcmToken(key)}
-        FirebaseInstanceId.getInstance().instanceId
-            .addOnCompleteListener(OnCompleteListener { task ->
-                if (!task.isSuccessful) {
-//                    Log.w("FCM", "getInstanceId failed", task.exception)
-                    return@OnCompleteListener
-                }
-                // Get new Instance ID token
-                sessionSyncManager.setFcmToken(task.result?.token)
-            })
     }
 
     // Handler for ActivityResults from file selectors
@@ -153,14 +141,12 @@ class MainActivity : AppCompatActivity() {
         if (data.clipData != null) {
             val count = data.clipData?.itemCount ?: 0
             for (index in 0 until count) {
-                val imageUri = data.clipData?.getItemAt(index)?.uri
-                if (imageUri != null) {
+                data.clipData?.getItemAt(index)?.uri?.let { imageUri ->
                     myList.add(imageUri)
                 }
             }
         } else {
-            val path = data.data?.path
-            if (path != null) {
+            data.data?.path?.let { path ->
                 myList.add(Uri.parse(path))
             }
         }

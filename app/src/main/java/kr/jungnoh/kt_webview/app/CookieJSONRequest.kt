@@ -14,9 +14,6 @@ class CookieJSONRequest
 
     private val headers = HashMap<String, String>()
 
-    /**
-     * Custom class!
-     */
     fun setCookies(cookies: List<String>) {
         val sb = StringBuilder()
         for (cookie in cookies) {
