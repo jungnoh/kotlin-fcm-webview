@@ -14,17 +14,17 @@ class SessionSyncManager(private var cookie: String?, private var fcmToken: Stri
             return
         }
         val payload = HashMap<String, String>()
-        payload["key"] = fcmToken!!
+        payload["token"] = fcmToken!!
         val errorCallback = Response.ErrorListener { error -> Log.d("SESSION", error.toString()) }
 
         val request = CookieJSONRequest(
             Request.Method.POST,
-            "${Config.host}/api/me/token",
+            "${Config.host}/token",
             JSONObject(payload as Map<*, *>),
             Response.Listener {},
             errorCallback
         )
-        request.setCookies(listOf("connect.sid=$cookie"))
+        request.setCookies(listOf("${Config.sessionKey}=$cookie"))
         requestQueue.add(request)
     }
     fun setSession(cookie: String?) {
@@ -36,8 +36,12 @@ class SessionSyncManager(private var cookie: String?, private var fcmToken: Stri
         }
     }
     fun setFcmToken(fcmToken: String?) {
-        this.fcmToken = fcmToken
-        syncTokens()
+        if ((fcmToken ?: "").compareTo(this.fcmToken ?: "") != 0) {
+            this.fcmToken = fcmToken
+            syncTokens()
+        } else {
+            this.fcmToken = fcmToken
+        }
     }
     init {
         syncTokens()

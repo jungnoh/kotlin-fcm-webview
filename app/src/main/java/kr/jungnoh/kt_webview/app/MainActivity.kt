@@ -14,9 +14,12 @@ import android.widget.Toast
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import android.webkit.*
+import com.google.android.gms.tasks.OnCompleteListener
+import com.google.firebase.messaging.FirebaseMessaging
 
 
 class MainActivity : AppCompatActivity() {
+    lateinit var sessionSyncManager: SessionSyncManager
     var mFilePathCallback: ValueCallback<Array<Uri>>? = null
     // ResultCode of file chooser
     val mFileChooserResultCode = 801
@@ -24,7 +27,7 @@ class MainActivity : AppCompatActivity() {
     private var backKeyPressedTime: Long = 0
 
     fun updateSessionToken(session: String) {
-        SessionLiveData.get(this).postValue(session)
+        LiveData.session.value = session
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -126,10 +129,27 @@ class MainActivity : AppCompatActivity() {
         actionBar?.hide()
         setContentView(R.layout.activity_main)
         setupWebView()
+
+        sessionSyncManager = SessionSyncManager(null, null, this.applicationContext)
+        LiveData.session.observeForever { session ->
+            sessionSyncManager.setSession(session)
+        }
+        LiveData.fcmToken.observeForever { token ->
+            sessionSyncManager.setFcmToken(token)
+        }
+
+        FirebaseMessaging.getInstance().token.addOnCompleteListener(OnCompleteListener { task ->
+            if (!task.isSuccessful) {
+                return@OnCompleteListener
+            }
+            val token = task.result
+            LiveData.fcmToken.value = token
+        })
     }
 
     // Handler for ActivityResults from file selectors
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != mFileChooserResultCode) {
             return
         }

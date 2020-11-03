@@ -8,7 +8,7 @@ class MyFCMService : FirebaseMessagingService() {
     private lateinit var sessionSyncManager: SessionSyncManager
 
     override fun onNewToken(token: String) {
-        sessionSyncManager.setFcmToken(token)
+        LiveData.fcmToken.postValue(token)
     }
 
     override fun onMessageReceived(remoteMsg: RemoteMessage) {
@@ -22,8 +22,11 @@ class MyFCMService : FirebaseMessagingService() {
     override fun onCreate() {
         super.onCreate()
         sessionSyncManager = SessionSyncManager(null, null, this.applicationContext)
-        SessionLiveData.get(this).observeForever { session ->
+        LiveData.session.observeForever { session ->
             sessionSyncManager.setSession(session)
+        }
+        LiveData.fcmToken.observeForever { token ->
+            sessionSyncManager.setFcmToken(token)
         }
     }
 }
