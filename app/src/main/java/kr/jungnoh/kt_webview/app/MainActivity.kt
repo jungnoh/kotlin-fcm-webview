@@ -8,7 +8,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.widget.Toast
@@ -17,18 +16,20 @@ import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.tasks.OnCompleteListener
 import com.google.firebase.iid.FirebaseInstanceId
 import android.webkit.*
-import java.io.File
 
 
 class MainActivity : AppCompatActivity() {
-    var session: Session? = null
+    private lateinit var sessionSyncManager: SessionSyncManager
+
     val fcm = MyFCMService()
     var mFilePathCallback: ValueCallback<Array<Uri>>? = null
-    var mUploadMessage: ValueCallback<Uri>? = null
-    val FILECHOOSER_RESULTCODE = 1
+    // ResultCode of file chooser
+    val mFileChooserResultCode = 801
+    // Timestamp of when the back key was last pressed.
+    private var backKeyPressedTime: Long = 0
 
     @SuppressLint("SetJavaScriptEnabled")
-    fun setupWebview() {
+    fun setupWebView() {
         val wv = findViewById<WebView>(R.id.main_webview)
         wv.settings.setSupportMultipleWindows(true)
         wv.settings.javaScriptEnabled = true
@@ -44,9 +45,9 @@ class MainActivity : AppCompatActivity() {
         wv.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                val cookies = parseCookie(CookieManager.getInstance().getCookie(Config.host))
+                val cookies = extractCookie(CookieManager.getInstance().getCookie(Config.host))
                 if (cookies != null) {
-                    session?.setSession(cookies)
+                    sessionSyncManager.setSession(cookies)
                 }
                 CookieManager.getInstance().flush()
             }
@@ -102,7 +103,7 @@ class MainActivity : AppCompatActivity() {
                 val intent = fileChooserParams?.createIntent()
                 intent?.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true)
                 try {
-                    startActivityForResult(intent, FILECHOOSER_RESULTCODE)
+                    startActivityForResult(intent, mFileChooserResultCode)
                 } catch (e: ActivityNotFoundException) {
                     mFilePathCallback = null
                     Toast.makeText(this@MainActivity, "Cannot open file chooser", Toast.LENGTH_LONG).show()
@@ -116,45 +117,18 @@ class MainActivity : AppCompatActivity() {
         wv.loadUrl(url)
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        Log.i("MainActivity", "OnActivityResult")
-        if (requestCode == FILECHOOSER_RESULTCODE) {
-            if (mFilePathCallback == null || data == null || resultCode != Activity.RESULT_OK) return
-            val myList: MutableList<Uri> = mutableListOf()
-            if (data.clipData != null) {
-                val count = data.clipData?.itemCount
-                var currentItem = 0
-                while(currentItem < (count ?: 0)) {
-                    val imageUri = data.clipData?.getItemAt(currentItem)?.uri
-                    if (imageUri != null) {
-                        myList.add(imageUri)
-                    }
-                    currentItem++
-                }
-            } else {
-                val path = data.data?.path
-                if (path != null) {
-                    myList.add(Uri.parse(path))
-                }
-            }
-            mFilePathCallback?.onReceiveValue(myList.toTypedArray())
-            mFilePathCallback = null
-            // single: resultCode -1, mData: Uri
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        sessionSyncManager = SessionSyncManager(null, null, this@MainActivity)
         // WebView debug
         WebView.setWebContentsDebuggingEnabled(true) // KitKat~
         if(GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this) != ConnectionResult.SUCCESS) {
             GoogleApiAvailability.getInstance().makeGooglePlayServicesAvailable(this)
         }
-        super.onCreate(savedInstanceState)
         actionBar?.hide()
         setContentView(R.layout.activity_main)
-        setupWebview()
-        session = Session(null, null, this)
-        fcm.onChange = {key -> session?.setFcmToken(key)}
+        setupWebView()
+        fcm.onChange = {key -> sessionSyncManager.setFcmToken(key)}
         FirebaseInstanceId.getInstance().instanceId
             .addOnCompleteListener(OnCompleteListener { task ->
                 if (!task.isSuccessful) {
@@ -162,11 +136,37 @@ class MainActivity : AppCompatActivity() {
                     return@OnCompleteListener
                 }
                 // Get new Instance ID token
-                this.session?.setFcmToken(task.result?.token)
+                sessionSyncManager.setFcmToken(task.result?.token)
             })
     }
 
-    var backKeyPressedTime: Long = 0
+    // Handler for ActivityResults from file selectors
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != mFileChooserResultCode) {
+            return
+        }
+        if (mFilePathCallback == null || data == null || resultCode != Activity.RESULT_OK) {
+            mFilePathCallback = null
+            return
+        }
+        val myList: MutableList<Uri> = mutableListOf()
+        if (data.clipData != null) {
+            val count = data.clipData?.itemCount ?: 0
+            for (index in 0 until count) {
+                val imageUri = data.clipData?.getItemAt(index)?.uri
+                if (imageUri != null) {
+                    myList.add(imageUri)
+                }
+            }
+        } else {
+            val path = data.data?.path
+            if (path != null) {
+                myList.add(Uri.parse(path))
+            }
+        }
+        mFilePathCallback?.onReceiveValue(myList.toTypedArray())
+        mFilePathCallback = null
+    }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
@@ -185,35 +185,22 @@ class MainActivity : AppCompatActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
-    fun parseCookie(cookie: String?): String? {
-        if (cookie == null) {
-            return null
-        }
-        val items = cookie.split(";")
-        for (item: String in items) {
-            val parts = item.split('=')
-            if (parts.size < 2) {
-                continue
-            }
-            if (parts[0].trim().compareTo("connect.sid") == 0) {
-                return parts[1].trim()
-            }
-        }
-        return null
-    }
-
+    @Suppress("UNUSED_PARAMETER")
     fun onPrevClick(view: View) {
         val wv = findViewById<WebView>(R.id.main_webview)
         wv.goBack()
     }
+    @Suppress("UNUSED_PARAMETER")
     fun onNextClick(view: View) {
         val wv = findViewById<WebView>(R.id.main_webview)
         wv.goForward()
     }
+    @Suppress("UNUSED_PARAMETER")
     fun onHomeClick(view: View) {
         val wv = findViewById<WebView>(R.id.main_webview)
         wv.loadUrl(Config.host)
     }
+    @Suppress("UNUSED_PARAMETER")
     fun onRefreshClick(view: View) {
         val wv = findViewById<WebView>(R.id.main_webview)
         wv.reload()
